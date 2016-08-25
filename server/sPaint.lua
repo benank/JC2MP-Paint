@@ -1,39 +1,38 @@
+local insert = table.insert
+local WorldNetworkObject = WorldNetworkObject
+local zero_angle = Angle()
+
 class 'Paint'
 
 function Paint:__init()
-
-	self.paintings = {}
-
+	self.objects = {}
 	Network:Subscribe("SyncPainting", self, self.SyncPainting)
 	Events:Subscribe("ModuleUnload", self, self.Unload)
-
 end
 
 function Paint:Unload()
-
-	for _, obj in pairs(self.paintings) do
+	for _, obj in ipairs(self.objects) do
 		obj:Remove()
 	end
-	
 end
 
 function Paint:SyncPainting(args, player)
 
-	local obj = StaticObject.Create({
-		position = args.vertices[2],
-		angle = Angle(),
-		model = " ",
-		collision = " ",
-		world = player:GetWorld(),
-		fixed = true
+	local obj = WorldNetworkObject.Create({
+		position = args.position,
+		angle = zero_angle,
+		values = {
+			radius = args.radius,
+			color = args.color,
+			positions = args.positions,
+			angles = args.angles,
+			is_painting = true,
+		},
+		world = player:GetWorld()
 	})
-	
-	obj:SetNetworkValue("vertices", args.vertices)
-	obj:SetNetworkValue("color", args.color)
-	obj:SetNetworkValue("IsPainting", true)
-		
-	table.insert(self.paintings, obj)
-	
+
+	insert(self.objects, obj)
+
 end
 
 Paint = Paint()
