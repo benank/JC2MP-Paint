@@ -2,9 +2,9 @@ local insert, remove = table.insert, table.remove
 local Vector3, Painting, Physics, Angle = Vector3, Painting, Physics, Angle
 
 local heights = {
-	['Layer 1'] = 0.01,
-	['Layer 2'] = 0.02,
-	['Layer 3'] = 0.04,
+	['Layer 1'] = 0.10,
+	['Layer 2'] = 0.11,
+	['Layer 3'] = 0.12,
 }
 
 local blacklist = {
@@ -164,7 +164,7 @@ function Paint:GameRender(args)
 
 				self.painting = self.painting or Painting(self.brush_size / 2, self.brush_color)
 
-				local angle = Angle.FromVectors(ray.normal, Vector3.Up)
+				local angle = Angle.FromVectors(Vector3.Up, ray.normal)
 				local position = ray.position + angle * Vector3.Up * heights[self.layersbox:GetText()]
 
 				self.painting:AddStroke(position, angle)
