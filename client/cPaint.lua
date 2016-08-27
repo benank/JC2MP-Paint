@@ -1,34 +1,49 @@
+local insert, remove = table.insert, table.remove
+local Vector3, Painting, Physics, Angle = Vector3, Painting, Physics, Angle
+
+local heights = {
+	['Layer 1'] = 0.10,
+	['Layer 2'] = 0.11,
+	['Layer 3'] = 0.12,
+}
+
+local blacklist = {
+	[Action.Fire] = true,
+	[Action.FireLeft] = true,
+	[Action.FireRight] = true,
+	[Action.VehicleFireLeft] = true,
+	[Action.VehicleFireRight] = true,
+	[Action.McFire] = true,
+}
+
 class 'Paint'
 
 function Paint:__init()
 
 	self.paint_key = VirtualKey.LButton
-
-	self.painting = false
-	
 	self.colorpick_key = "P"
-	
+	self.brush_size = 0.5
+	self.brush_range = 10
+	self.brush_color = Color.Red
+
 	self.colorpicker = HSVColorPicker.Create()
 	self.colorpicker:SetSize(Render.Size / 2)
 	self.colorpicker:SetPosition(Render.Size / 2 - self.colorpicker:GetSize() / 2)
 	self.colorpicker:Hide()
-	self.colorpicker:SetColor(Color.Red)
-	
+	self.colorpicker:SetColor(self.brush_color)
+
 	self.slider = HorizontalSlider.Create()
 	self.slider:SetSize(Vector2(Render.Size.x * 0.5, Render.Size.y * 0.015))
 	self.slider:SetPosition(Vector2(Render.Size.x / 2 - self.slider:GetSize().x / 2, Render.Size.y * 0.2))
-	self.slider:SetClampToNotches(false)
-	self.slider:SetMaximum(5)
-	self.slider:SetMinimum(0.05)
 	self.slider:SetRange(0.05, 5)
-	self.slider:SetValue(0.5)
+	self.slider:SetValue(self.brush_size)
 	self.slider:Hide()
-	
+
 	self.activebutton = Button.Create()
 	self.activebutton:SetSize(Render.Size * 0.05)
-	self.activebutton:SetPosition(Render.Size / 2 - Vector2(self.activebutton:GetSize().x / 2,Render.Size.y * 0.375))
+	self.activebutton:SetPosition(Render.Size / 2 - Vector2(self.activebutton:GetSize().x / 2, Render.Size.y * 0.375))
 	self.activebutton:SetText("Disabled")
-	self.activebutton:SetTextSize(self.activebutton:GetSize().x * 0.2)
+	self.activebutton:SetTextSize(self.activebutton:GetSize().x * 0.21)
 	self.activebutton:SetTextNormalColor(Color.Red)
 	self.activebutton:SetTextHoveredColor(Color.Red)
 	self.activebutton:SetTextPressedColor(Color.Red)
@@ -37,79 +52,64 @@ function Paint:__init()
 	self.activebutton:SetToggleable(true)
 	self.activebutton:Subscribe("Toggle", self, self.Toggle)
 	self.activebutton:Hide()
-	
+
 	self.layersbox = ComboBox.Create()
 	self.layer1 = self.layersbox:AddItem("Layer 1")
 	self.layersbox:AddItem("Layer 2")
 	self.layersbox:AddItem("Layer 3")
 	self.layersbox:SelectItem(self.layer1)
 	self.layersbox:SetSize(Vector2(Render.Size.x * 0.06, Render.Size.y * 0.035))
-	self.layersbox:SetTextSize(self.layersbox:GetSize().x * 0.25)
+	self.layersbox:SetTextSize(self.layersbox:GetSize().x * 0.18)
 	self.layersbox:SetPosition(Render.Size / 2 + Vector2(self.layersbox:GetSize().x * 2, -Render.Size.y * 0.375))
 	self.layersbox:Hide()
-	
-	self.brush_size = 0.5
-	self.brush_range = 10
-	self.brush_color = self.colorpicker:GetColor()
-	
-	self.cur_vertices = {}
-	self.cur_pos = {}
-	self.cur_painting = nil
 
-	self.models = {}
-	
-	Timer.SetTimeout(1000, function()
+	self.client_paintings = {}
+	self.network_paintings = {}
+	self.model_queue = {}
+
+	Timer.SetInterval(1000, function()
 		self:SyncPainting()
 	end)
 
 	Events:Subscribe("GameRender", self, self.GameRender)
 	Events:Subscribe("KeyUp", self, self.KeyUp)
-	Events:Subscribe("LocalPlayerInput", self, self.LPI)
+	Events:Subscribe("LocalPlayerInput", self, self.LocalPlayerInput)
+	Events:Subscribe("WorldNetworkObjectCreate", self, self.PaintingCreate)
 
 end
 
 function Paint:Toggle()
 
-	if self.activebutton:GetToggleState() then
-	
-		self.activebutton:SetText("Enabled")
-		self.activebutton:SetTextNormalColor(Color(0,255,0))
-		self.activebutton:SetTextHoveredColor(Color(0,255,0))
-		self.activebutton:SetTextPressedColor(Color(0,255,0))
-		self.activebutton:SetTextDisabledColor(Color(0,255,0))
-		
+	local button = self.activebutton
+
+	if button:GetToggleState() then
+		local color = Color.Lime
+		button:SetText("Enabled")
+		button:SetTextNormalColor(color)
+		button:SetTextHoveredColor(color)
+		button:SetTextPressedColor(color)
+		button:SetTextDisabledColor(color)
 	else
-	
-		self.activebutton:SetText("Disabled")
-		self.activebutton:SetTextNormalColor(Color.Red)
-		self.activebutton:SetTextHoveredColor(Color.Red)
-		self.activebutton:SetTextPressedColor(Color.Red)
-		self.activebutton:SetTextDisabledColor(Color.Red)
-		
+		local color = Color.Red
+		button:SetText("Disabled")
+		button:SetTextNormalColor(color)
+		button:SetTextHoveredColor(color)
+		button:SetTextPressedColor(color)
+		button:SetTextDisabledColor(color)
 	end
-	
+
 end
 
-function Paint:LPI(args)
-
-	if self.colorpicker:GetVisible() then
+function Paint:LocalPlayerInput(args)
+	if self.colorpicker:GetVisible() or (self.activebutton:GetToggleState() and blacklist[args.input]) then
 		return false
 	end
-	
-	if self.activebutton:GetToggleState() and 
-	(args.input == Action.Fire 
-	or args.input == Action.FireLeft 
-	or args.input == Action.FireRight 
-	or args.input == Action.VehicleFire) then
-		return false
-	end
-	
 end
 
 function Paint:KeyUp(args)
 
 	if args.key == string.byte(self.colorpick_key) then
-	
+
 		if self.colorpicker:GetVisible() then
 			self.colorpicker:Hide()
 			self.slider:Hide()
@@ -124,104 +124,75 @@ function Paint:KeyUp(args)
 			self.layersbox:Show()
 		end
 		Mouse:SetVisible(self.colorpicker:GetVisible())
-		
+
 	end
-	
+
 end
 
 function Paint:SyncPainting()
-
-	if not self.painting then
-
-		if table.count(self.cur_pos) > 5 then
-			Network:Send("SyncPainting", {vertices = self.cur_pos, color = self.brush_color})
-		end
-		
-		self.cur_pos = {}
-		self.cur_vertices = {}
-		self.cur_painting = nil
-		
-	end
-
-	for obj in Client:GetStaticObjects() do
-	
-		if not self.models[obj:GetId()] and obj:GetValue("IsPainting") and obj:GetValue("vertices") and obj:GetValue("color") then
-		
-			local points = obj:GetValue("vertices")
-			local color = obj:GetValue("color") or Color.White
-			local vertices = {}
-			for _, pos in ipairs(points) do
-				table.insert(vertices, Vertex(pos))
-			end
-	
-			self.models[obj:GetId()] = Painting(vertices, color)
-			
-		end
-		
-	end
-
-
-	Timer.SetTimeout(1000, function()
-		self:SyncPainting()
-	end)
-	
+	if not self.client_paintings[1] then return end
+	local painting = remove(self.client_paintings, 1)
+	self.intermediate = painting
+	painting:Sync()
 end
 
+function Paint:PaintingCreate(args)
+
+	local values = args.object:GetValues()
+	if not values.is_painting then return end
+
+	insert(self.model_queue, function()
+		local painting = Painting(values.radius, values.color, true)
+		painting:SetStrokes(values.positions, values.angles)
+		insert(self.network_paintings, painting)
+		self.intermediate = nil
+	end)
+
+end
 
 function Paint:GameRender(args)
 
-	if Key:IsDown(self.paint_key) and not self.colorpicker:GetVisible() and self.activebutton:GetToggleState() then
-		self.painting = true
-		
-		local ray = Physics:Raycast(Camera:GetPosition(), Camera:GetAngle() * Vector3.Forward, 0, self.brush_range)
-		
-		if not ray.entity and ray.distance < self.brush_range then
-		
-			local height = 0
-			if self.layersbox:GetText() == "Layer 2" then
-				height = 0.02
-			elseif self.layersbox:GetText() == "Layer 3" then
-				height = 0.04
+	if not self.colorpicker:GetVisible() and self.activebutton:GetToggleState() then
+
+		if Key:IsDown(self.paint_key) then
+
+			local ray = Physics:Raycast(Camera:GetPosition(), Camera:GetAngle() * Vector3.Forward, 0, self.brush_range)
+
+			if not ray.entity and ray.distance < self.brush_range and (not self.last_position or self.last_position:Distance(ray.position) > 0.2 * self.brush_size) then
+
+				self.last_position = ray.position
+
+				self.painting = self.painting or Painting(self.brush_size / 2, self.brush_color)
+
+				local angle = Angle.FromVectors(Vector3.Up, ray.normal)
+				local position = ray.position + angle * Vector3.Up * heights[self.layersbox:GetText()]
+
+				self.painting:AddStroke(position, angle)
+
 			end
-		
-			local angle = Angle.FromVectors(Vector3.Forward, ray.normal) * Angle(0,math.pi / 2,0)
-			local pos = ray.position + angle * Vector3.Down * (0.05 + 0.035 + height)
-			
-			
-			table.insert(self.cur_vertices, Vertex(pos + angle * Vector3(-self.brush_size / 2, 0, -self.brush_size / 2)))
-			table.insert(self.cur_vertices, Vertex(pos + angle * Vector3(self.brush_size / 2, 0, self.brush_size / 2)))
-			table.insert(self.cur_vertices, Vertex(pos + angle * Vector3(-self.brush_size / 2, 0, self.brush_size / 2)))
-			
-			table.insert(self.cur_vertices, Vertex(pos + angle * Vector3(-self.brush_size / 2, 0, -self.brush_size / 2)))
-			table.insert(self.cur_vertices, Vertex(pos + angle * Vector3(self.brush_size / 2, 0, self.brush_size / 2)))
-			table.insert(self.cur_vertices, Vertex(pos + angle * Vector3(self.brush_size / 2, 0, -self.brush_size / 2)))
-			
-			self.cur_painting = Painting(self.cur_vertices, self.brush_color)
-			
-			table.insert(self.cur_pos, pos + angle * Vector3(-self.brush_size / 2, 0, -self.brush_size / 2))
-			table.insert(self.cur_pos, pos + angle * Vector3(self.brush_size / 2, 0, self.brush_size / 2))
-			table.insert(self.cur_pos, pos + angle * Vector3(-self.brush_size / 2, 0, self.brush_size / 2))
-			
-			table.insert(self.cur_pos, pos + angle * Vector3(-self.brush_size / 2, 0, -self.brush_size / 2))
-			table.insert(self.cur_pos, pos + angle * Vector3(self.brush_size / 2, 0, self.brush_size / 2))
-			table.insert(self.cur_pos, pos + angle * Vector3(self.brush_size / 2, 0, -self.brush_size / 2))
-			
-			
+
+		elseif self.painting then
+
+			insert(self.client_paintings, self.painting)
+			self.painting = nil
+
 		end
-		
-	else
-		self.painting = false
+
 	end
-	
-	if self.cur_painting then
-		self.cur_painting:Draw()
-	end
-	
-	for _, painting in pairs(self.models) do
+
+	if self.model_queue[1] then table.remove(self.model_queue, 1)() end
+
+	if self.painting then self.painting:Draw() end
+	if self.intermediate then self.intermediate:Draw() end
+
+	for _, painting in pairs(self.client_paintings) do
 		painting:Draw()
 	end
-	
-	
+
+	for _, painting in pairs(self.network_paintings) do
+		painting:Draw()
+	end
+
 end
 
 Paint = Paint()
